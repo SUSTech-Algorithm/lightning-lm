@@ -1,5 +1,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
+// rclcpp for optional internal publisher
+#include <rclcpp/rclcpp.hpp>
 
 #include "core/localization/lidar_loc/lidar_loc.h"
 #include "core/localization/localization.h"
@@ -22,6 +24,26 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
 
     YAML_IO yaml(yaml_path);
     options_.with_ui_ = yaml.GetValue<bool>("system", "with_ui");
+
+    // Read optional initialization pose from YAML (system.init_pose)
+    // Keys: system.init_pose_tx, init_pose_ty, init_pose_tz, init_pose_qx, init_pose_qy, init_pose_qz, init_pose_qw
+    try {
+        double tx = yaml.GetValue<double>("system", "init_pose_tx");
+        double ty = yaml.GetValue<double>("system", "init_pose_ty");
+        double tz = yaml.GetValue<double>("system", "init_pose_tz");
+        double qx = yaml.GetValue<double>("system", "init_pose_qx");
+        double qy = yaml.GetValue<double>("system", "init_pose_qy");
+        double qz = yaml.GetValue<double>("system", "init_pose_qz");
+        double qw = yaml.GetValue<double>("system", "init_pose_qw");
+        Eigen::Quaterniond q(qw, qx, qy, qz);
+        Eigen::Vector3d t(tx, ty, tz);
+        init_pose_transform_ = SE3(q, t);
+        init_pose_set_ = true;
+        LOG(INFO) << "Init pose loaded: " << tx << ", " << ty << ", " << tz << "; q=" << qx << "," << qy << "," << qz << "," << qw;
+    } catch (...) {
+        // Keys not present or parse error: keep identity
+        init_pose_set_ = false;
+    }
 
     /// lidar odom前端
     LaserMapping::Options opt_lio;
@@ -86,10 +108,46 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
             LOG_EVERY_N(INFO, 10) << "loc fps: " << loc_fps;
         }
 
+        // save the raw result for internal use (UI, callbacks) and assign to member
         loc_result_ = res;
 
+        // For external publishing only, apply optional init transform. Do NOT modify
+        // loc_result_ so that UI and tf_callback_ continue to receive the original
+        // PGO result.
+        LocalizationResult pub_res = res;
+        if (init_pose_set_) {
+            pub_res.pose_ = init_pose_transform_ * pub_res.pose_;
+        }
+
+        // invoke external tf callback with the unmodified (internal) result
         if (tf_callback_ && loc_result_.valid_) {
             tf_callback_(loc_result_.ToGeoMsg());
+        }
+
+        // If an internal ROS node/publisher is set, publish the transformed (if set)
+        // pose message only. Use pub_mutex_ to protect the publisher pointer.
+        std::shared_ptr<rclcpp::Publisher<geometry_msgs::msg::PoseStamped>> pub_copy;
+        geometry_msgs::msg::PoseStamped msg_copy;
+        {
+            std::lock_guard<std::mutex> guard(pub_mutex_);
+            pub_copy = pose_pub_;
+            if (pub_copy && pub_res.valid_) {
+                // build PoseStamped from pub_res (do not modify pub_res itself)
+                msg_copy.header.frame_id = "map";
+                msg_copy.header.stamp = math::FromSec(pub_res.timestamp_);
+                auto q = pub_res.pose_.so3().unit_quaternion();
+                auto t = pub_res.pose_.translation();
+                msg_copy.pose.position.x = t[0];
+                msg_copy.pose.position.y = t[1];
+                msg_copy.pose.position.z = t[2];
+                msg_copy.pose.orientation.x = q.x();
+                msg_copy.pose.orientation.y = q.y();
+                msg_copy.pose.orientation.z = q.z();
+                msg_copy.pose.orientation.w = q.w();
+            }
+        }
+        if (pub_copy && pub_res.valid_) {
+            pub_copy->publish(msg_copy);
         }
 
         if (ui_) {
@@ -295,6 +353,7 @@ void Localization::ProcessIMUMsg(IMUPtr imu) {
 // }
 
 void Localization::Finish() {
+    UL lock(global_mutex_);
     lidar_loc_->Finish();
     if (ui_) {
         ui_->Quit();
@@ -302,6 +361,17 @@ void Localization::Finish() {
 
     lidar_loc_proc_cloud_.Quit();
     lidar_odom_proc_cloud_.Quit();
+
+    // reset publisher/node to avoid dangling references
+    {
+        std::lock_guard<std::mutex> guard(pub_mutex_);
+        if (pose_pub_) {
+            pose_pub_.reset();
+        }
+        if (node_) {
+            node_.reset();
+        }
+    }
 }
 
 void Localization::SetExternalPose(const Eigen::Quaterniond& q, const Eigen::Vector3d& t) {
@@ -313,5 +383,18 @@ void Localization::SetExternalPose(const Eigen::Quaterniond& q, const Eigen::Vec
 }
 
 void Localization::SetTFCallback(Localization::TFCallback&& callback) { tf_callback_ = callback; }
+
+void Localization::SetROSNode(rclcpp::Node::SharedPtr node) {
+    // protect pub/node with pub_mutex_
+    {
+        std::lock_guard<std::mutex> guard(pub_mutex_);
+        node_ = node;
+        if (node_) {
+            pose_pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>("slam/pose", 10);
+        } else {
+            pose_pub_.reset();
+        }
+    }
+}
 
 }  // namespace lightning::loc

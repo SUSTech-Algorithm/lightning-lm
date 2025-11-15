@@ -63,6 +63,10 @@ bool LocSystem::Init(const std::string &yaml_path) {
             [this](const geometry_msgs::msg::TransformStamped &pose) { tf_broadcaster_->sendTransform(pose); });
     }
 
+    // Provide the ROS node to Localization so it can create its internal publisher
+    // (scheme B). This will create topic "pgo_pose" inside Localization.
+    loc_->SetROSNode(node_);
+
     bool ret = loc_->Init(yaml_path, map_path);
     if (ret) {
         LOG(INFO) << "online loc node has been created.";

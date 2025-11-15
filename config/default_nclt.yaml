@@ -56,8 +56,17 @@ system:
   enable_lidar_odom_skip: false
   lidar_loc_skip_num: 4
   lidar_odom_skip_num: 2
-  map_path: /home/jienan/Desktop/SLAM/data/new_map
+  map_path: ./data/new_map_1
   pub_tf: true
+  # Optional initial transform to correct output coordinate frame (applied to PGO output)
+  # Provide translation (meters) and quaternion (qx,qy,qz,qw)
+  init_pose_tx: 0.0
+  init_pose_ty: 0.0
+  init_pose_tz: 0.0
+  init_pose_qx: 0.0
+  init_pose_qy: 0.0
+  init_pose_qz: 0.0
+  init_pose_qw: 1.0
 
 loop_closing:
   loop_kf_gap: 20       # 每隔多少个关键帧检查一次

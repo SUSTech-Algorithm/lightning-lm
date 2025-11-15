@@ -1,7 +1,10 @@
 #pragma once
 
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "std_msgs/msg/int32.hpp"
+// rclcpp for internal publisher (optional - set via SetROSNode)
+#include <rclcpp/rclcpp.hpp>
 
 #include "common/imu.h"
 #include "core/lio/laser_mapping.h"
@@ -81,6 +84,10 @@ class Localization {
 
     void SetTFCallback(TFCallback&& callback);
 
+    // Set ROS node so Localization can create internal publishers. This is optional;
+    // preferred pattern is to set a publisher in the owning node and use SetTFCallback.
+    void SetROSNode(rclcpp::Node::SharedPtr node);
+
     // void SetPathCallback(std::function<void(const nav_msgs::msg::Path& path)>&& callback);
     // void SetPointcloudWorldCallback(std::function<void(const sensor_msgs::msg::PointCloud2& pointcloud)>&& callback);
     // void SetPointcloudBodyCallback(std::function<void(const sensor_msgs::msg::PointCloud2& pointcloud)>&& callback);
@@ -120,6 +127,18 @@ class Localization {
     LocStateCallback loc_state_callback_;
     PointcloudBodyCallback pointcloud_body_callback_;
     PointcloudWorldCallback pointcloud_world_callback_;
+
+    // Optional ROS node and publisher. If set, Localization will publish
+    // PGO output as geometry_msgs::msg::TransformStamped on topic "pgo_pose".
+    rclcpp::Node::SharedPtr node_ = nullptr;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_ = nullptr;
+    // Dedicated mutex to protect publisher/node to avoid deadlocks with global_mutex_
+    std::mutex pub_mutex_;
+
+    // Optional initialization transform read from YAML. If set, this transform will be
+    // applied to PGO output poses to correct the coordinate frame.
+    SE3 init_pose_transform_;
+    bool init_pose_set_ = false;
 
     /// 输入检查
     double last_imu_time_ = 0;
