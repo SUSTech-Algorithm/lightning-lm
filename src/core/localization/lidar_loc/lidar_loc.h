@@ -215,7 +215,7 @@ class LidarLoc {
     SE3 current_dr_pose_;  // 本次的DR相对位置
     bool parking_ = false;
 
-    double try_other_guess_trans_th_ = 0.3;               // 在初始估计相差多少时，尝试其他的解
+    double try_other_guess_trans_th_ = 0.3;               // 在初始估计相差多少时，尝试其的解
     double try_other_guess_rot_th_ = 0.5 * M_PI / 180.0;  // 在初始估计相差多少时，尝试其他的解
     // double low_vel_th_ = 1.0;                             // 低速阈值m/s
     // double update_cache_dis_ = 0;                         // 动态图层的更新缓冲距离
